@@ -2,13 +2,13 @@
 -- 1. MASTER SESSIONS TABLE (Core Entry Layer)
 -- ============================================================================
 CREATE TABLE triage_sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
     app_id VARCHAR(50) NOT NULL,
     incident_number VARCHAR(30) NOT NULL,
     change_number VARCHAR(30),
     priority VARCHAR(20),
     status VARCHAR(20) DEFAULT 'Open',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()
 );
 
 -- Index the incident number for lightning-fast UI lookups (e.g., search by INC77790)
@@ -21,14 +21,14 @@ CREATE INDEX idx_triage_sessions_app ON triage_sessions(app_id);
 -- 2. METADATA TABLE (Layer 01 Details)
 -- ============================================================================
 CREATE TABLE triage_metadata (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID NOT NULL,
-    short_description TEXT,
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    short_description VARCHAR(MAX),
     assignment_group VARCHAR(100),
     assigned_to VARCHAR(100),
     risk_assessment VARCHAR(50),
     implementation_window VARCHAR(100),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
     
     -- Cascade deletes: if a master triage session is removed, clean up its metadata
     CONSTRAINT fk_metadata_session 
@@ -45,29 +45,30 @@ CREATE INDEX idx_triage_metadata_session ON triage_metadata(session_id);
 -- 3. EVIDENCE TABLE (Layer 02: Discovery, Assets & Elastic Logs)
 -- ============================================================================
 CREATE TABLE triage_evidence (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID NOT NULL,
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
     hostname VARCHAR(100) NOT NULL,
     
-    -- JSONB column to capture volatile infrastructure metrics (OS, CPU, Memory)
-    asset_details JSONB DEFAULT '{}'::jsonb,
+    -- In MS SQL Server, JSON is stored as standard VARCHAR(MAX) with an ISJSON constraint
+    asset_details VARCHAR(MAX) DEFAULT '{}',
     
-    -- TEXT or JSONB block containing the specific root-cause logs from Elasticsearch
-    technical_evidence TEXT,
+    -- VARCHAR(MAX) handles large blocks containing the specific root-cause logs from Elastic
+    technical_evidence VARCHAR(MAX),
     
     -- Optional metadata keeping track of the exact Elastic query used for auditability
-    elastic_query_meta JSONB DEFAULT '{}'::jsonb,
-    fetched_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    elastic_query_meta VARCHAR(MAX) DEFAULT '{}',
+    fetched_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
     
     CONSTRAINT fk_evidence_session 
         FOREIGN KEY (session_id) 
         REFERENCES triage_sessions(id) 
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+        
+    -- Ensures valid JSON structure inside the VARCHAR columns
+    CONSTRAINT chk_asset_details_json CHECK (ISJSON(asset_details) = 1),
+    CONSTRAINT chk_elastic_query_json CHECK (ISJSON(elastic_query_meta) = 1)
 );
 
 -- Index the foreign key and hostname for instant grouping and filtering
 CREATE INDEX idx_triage_evidence_session ON triage_evidence(session_id);
 CREATE INDEX idx_triage_evidence_host ON triage_evidence(hostname);
-
--- Advanced: GIN index for deep JSONB searching inside your infrastructure metrics
-CREATE INDEX idx_triage_evidence_asset_json ON triage_evidence USING gin (asset_details);
