@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     SERVICENOW_INSTANCE_URL: str = ""
     SERVICENOW_USERNAME: str = ""
     SERVICENOW_PASSWORD: str = ""
+
+    ELASTIC_ESS_CLOUD_ID="My_Deployment:dXMtY2VudHJhbDEuZ2NwLmNsb3VkLmVsYXN0aWMuY28..."
+    ELASTIC_ESS_API_KEY="VzF4M2JKMEJk...=="
     
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
