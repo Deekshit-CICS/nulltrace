@@ -68,7 +68,7 @@ async def create_triage_graph():
         tools_condition,
         {
             "tools": "tools",
-            "END": "summarize" # Route to compilation_node when the LLM finishes tool calli
+            "END": "summarize" # Route to compilation_node when the LLM finishes tool calling
         }
     )
 

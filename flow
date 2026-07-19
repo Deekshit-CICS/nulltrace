@@ -1,0 +1,41 @@
+                  [ API Request: INC77790 ]
+                             │
+                             ▼
+               ┌───────────────────────────┐
+               │   Primary Triage Agent    │ ──► Updates [triage_sessions]
+               │ (ServiceNow Context/Info) │     Updates [triage_metadata]
+               └───────────────────────────┘
+                             │
+                ┌────────────┴────────────┐
+                │      SPLIT / FAN OUT    │
+                └────────────┬────────────┘
+                             │
+              ┌──────────────┴──────────────┐
+              ▼                             ▼
+┌───────────────────────────┐ ┌───────────────────────────┐
+│ Historical Context Agent  │ │   Infrastructure Agent    │
+├───────────────────────────┤ ├───────────────────────────┤
+│ • Tool: find_similar_inc()│ │ • Tool: query_cmdb_ci()   │
+│ • Action: Searches past   │ │ • Action: Gathers host    │
+│   resolved tickets.       │ │   specs & environments.   │
+│ • DB: Updates             │ │ • DB: Updates             │
+│   [triage_metadata]       │ │   [triage_evidence]       │
+│   (historical_resolution) │ │   (asset_details)         │
+└───────────────────────────┘ └───────────────────────────┘
+              │                             │
+              │                             ▼
+              │               ┌───────────────────────────┐
+              │               │    Log Evidence Agent     │
+              │               ├───────────────────────────┤
+              │               │ • Tool: fetch_elastic()   │
+              │               │ • Action: Pulls errors.   │
+              │               │ • DB: Updates             │
+              │               │   [triage_evidence]       │
+              │               │   (technical_evidence)    │
+              │               └───────────────────────────┘
+              │                             │
+              └──────────────┬──────────────┘
+                             ▼
+                ┌───────────────────────────┐
+                │    Final State Merge      │ ──► Sets Status = 'Completed'
+                └───────────────────────────┘
