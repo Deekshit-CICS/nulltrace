@@ -87,6 +87,7 @@ async def get_incident_details(incident_number: str) -> str:
     import json
     return json.dumps(clean_output, indent=2)
 
+
 @mcp.tool()
 async def find_similar_closed_resolutions(search_keyword: str, max_results: int = 3) -> str:
     """
@@ -139,6 +140,7 @@ async def find_similar_closed_resolutions(search_keyword: str, max_results: int 
     import json
     return json.dumps({"historical_resolutions": cleaned_history}, indent=2)
 
+
 @mcp.tool()
 async def get_elastic_ci_logs(ci_name: str, incident_triggered_time: str) -> str:
     """
@@ -190,3 +192,59 @@ async def get_elastic_ci_logs(ci_name: str, incident_triggered_time: str) -> str
 
     except Exception as e:
         return json.dumps({"status": "Error", "message": f"Failed to query Elastic ESS: {str(e)}"})
+
+@mcp.tool()
+async def search_live_kbas(keywords: str, app_id: str = None) -> str:
+    """
+    Queries the live ServiceNow Knowledge Base for matching resolution articles 
+    and returns a summary of the top matches.
+    
+    Args:
+        keywords: Short keywords to search the text fields (e.g. 'disk space full').
+        app_id: Optional configuration item application ID to filter by.
+    """
+    if not SNOW_URL or not SNOW_USER or not SNOW_PASS:
+        return "Error: ServiceNow credentials are not configured on the MCP server."
+
+    # Build an encoded query string for ServiceNow
+    query = f"workflow_state=published^textLIKE{keywords}"
+    if app_id:
+        query += f"^cmdb_ci.number={app_id}"
+        
+    url = f"{SNOW_URL}/api/now/table/kb_knowledge"
+    params = {
+        "sysparm_query": query,
+        "sysparm_limit": "3",  # Pull top 3 matches to keep token usage optimized
+        "sysparm_fields": "number,short_description,text"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                url, 
+                auth=(SNOW_USER, SNOW_PASS), 
+                params=params, 
+                timeout=10.0
+            )
+            
+            if response.status_code != 200:
+                return f"Error: ServiceNow API responded with status code {response.status_code}."
+                
+            results = response.json().get("result", [])
+            if not results:
+                return "No matching Knowledge Base Articles (KBAs) found for these keywords."
+            
+            # Format the output data structural payload for the LLM
+            formatted_output = []
+            for kb in results:
+                formatted_output.append(
+                    f"Article: {kb.get('number')}\n"
+                    f"Title: {kb.get('short_description')}\n"
+                    f"Resolution Content:\n{kb.get('text')}\n"
+                    f"---"
+                )
+            
+            return "\n".join(formatted_output)
+            
+        except httpx.RequestError as e:
+            return f"Error connecting to ServiceNow: {str(e)}"
