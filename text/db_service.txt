@@ -1,128 +1,102 @@
-import json
-import uuid
+# app/db_service.py
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
+import json
 
-# Configure your MS SQL Connection
-connection_string = (
-    "DRIVER={ODBC Driver 17 for SQL Server};"
-    "SERVER=your_server_name;"
-    "DATABASE=your_db_name;"
-    "UID=your_user;PWD=your_password"
-)
+# Your MS SQL Connection Setup
+connection_string = "DRIVER={ODBC Driver 17 for SQL Server};SERVER=your_server;DATABASE=your_db;UID=user;PWD=pass"
 connection_url = URL.create("mssql+pyodbc", query={"odbc_connect": connection_string})
 engine = create_engine(connection_url)
 
-def save_triage_run(state: dict):
-    """
-    Takes the final_state from LangGraph and persists it to SQL Server.
-    """
-    session_id = uuid.uuid4() # Generate ID first to link all tables
-    
+def upsert_layer_01_master(session_id: str, app_id: str, incident_number: str, priority: str):
+    """Inserts or updates the master row in triage_sessions."""
     with engine.begin() as conn:
-        # 1. Insert into triage_sessions
         conn.execute(
             text("""
-                INSERT INTO triage_sessions (id, app_id, incident_number, priority) 
-                VALUES (:id, :app, :inc, :pri)
+                MERGE triage_sessions AS target
+                USING (SELECT :id AS id) AS source
+                ON (target.id = source.id)
+                WHEN MATCHED THEN
+                    UPDATE SET app_id = :app, incident_number = :inc, priority = :pri, status = 'Processing'
+                WHEN NOT MATCHED THEN
+                    INSERT (id, app_id, incident_number, priority, status) 
+                    VALUES (:id, :app, :inc, :pri, 'Processing');
             """),
-            {"id": session_id, "app": state.get("app_id"), "inc": state.get("incident_number"), "pri": state.get("priority")}
+            {"id": session_id, "app": app_id, "inc": incident_number, "pri": priority}
         )
-        
-        # 2. Insert into triage_metadata
-        conn.execute(
-            text("""
-                INSERT INTO triage_metadata (session_id, short_description, assignment_group) 
-                VALUES (:sid, :desc, :group)
-            """),
-            {"sid": session_id, "desc": state.get("short_description"), "group": state.get("assignment_group")}
-        )
-        
-        # 3. Insert into triage_evidence
-        conn.execute(
-            text("""
-                INSERT INTO triage_evidence (session_id, hostname, asset_details, technical_evidence) 
-                VALUES (:sid, :host, :details, :evidence)
-            """),
-            {
-                "sid": session_id, 
-                "host": state.get("hostname"), 
-                "details": state.get("asset_details"), # JSON string
-                "evidence": state.get("technical_evidence")
-            }
-        )
-    return session_id
 
-# Add this to app/db_service.py
-def fetch_complete_triage_session_data(session_id: str) -> Optional[dict]:
-    """Queries MS SQL and returns a combined dictionary of the current state."""
-    with engine.connect() as conn:
-        query = text("""
-            SELECT 
-                s.id AS session_id,
-                s.status,
-                s.app_id,
-                s.priority,
-                m.short_description,
-                m.historical_resolution,
-                m.kba_resolution_notes,
-                m.suggested_kba_url,
-                e.hostname,
-                e.asset_details,
-                e.technical_evidence
-            FROM triage_sessions s
-            LEFT JOIN triage_metadata m ON s.id = m.session_id
-            LEFT JOIN triage_evidence e ON s.id = e.session_id
-            WHERE s.id = :sid
-        """)
-        
-        result = conn.execute(query, {"sid": session_id}).fetchone()
-        if not result:
-            return None
-            
-        # Convert row result to dictionary
-        row_dict = dict(result._mapping)
-        
-        # Parse the asset_details JSON string back into a Python dict if it exists
-        if row_dict.get("asset_details"):
-            try:
-                row_dict["asset_details"] = json.loads(row_dict["asset_details"])
-            except Exception:
-                row_dict["asset_details"] = None
-                
-        return row_dict
-
-def get_active_session_by_incident(incident_number: str) -> Optional[dict]:
-    """
-    Queries MS SQL to see if an incident already has an ongoing or cached triage run.
-    """
-    with engine.connect() as conn:
-        query = text("""
-            SELECT TOP 1 id AS session_id, status 
-            FROM triage_sessions 
-            WHERE incident_number = :inc_num
-            ORDER BY created_at DESC  -- Pull the latest run if multiple historical exist
-        """)
-        
-        result = conn.execute(query, {"inc_num": incident_number}).fetchone()
-        if not result:
-            return None
-            
-        return dict(result._mapping)
-    
-def archive_or_delete_old_session(incident_number: str):
-    """
-    Cleans up old records for an incident before a forced re-run.
-    You can either delete rows entirely or append a timestamp suffix to the incident code
-    to preserve audit trails.
-    """
+def upsert_layer_01_metadata(session_id: str, short_description: str, assignment_group: str, assigned_to: str):
+    """Inserts or updates the metadata card details."""
     with engine.begin() as conn:
-        # Example strategy: soft-archive past sessions by changing the identifier key string
         conn.execute(
             text("""
-                UPDATE triage_sessions 
-                SET incident_number = CONCAT(incident_number, '_ARCHIVED_', FORMAT(GETUTCDATE(), 'yyyyMMddHHmmss'))
-                WHERE incident_number = :inc_num
+                MERGE triage_metadata AS target
+                USING (SELECT :sid AS session_id) AS source
+                ON (target.session_id = source.session_id)
+                WHEN MATCHED THEN
+                    UPDATE SET short_description = :desc, assignment_group = :group, assigned_to = :user, updated_at = SYSDATETIMEOFFSET()
+                WHEN NOT MATCHED THEN
+                    INSERT (session_id, short_description, assignment_group, assigned_to) 
+                    VALUES (:sid, :desc, :group, :user);
             """),
-            {"inc_num": incident_number}
+            {"sid": session_id, "desc": short_description, "group": assignment_group, "user": assigned_to}
         )
+
+def upsert_layer_02_evidence(session_id: str, hostname: str, asset_details: dict = None, technical_evidence: str = None):
+    """Inserts or incrementally updates Layer 02 components (Assets and Logs)."""
+    with engine.begin() as conn:
+        # Check if row exists for this host in this session
+        row = conn.execute(
+            text("SELECT id FROM triage_evidence WHERE session_id = :sid AND hostname = :host"),
+            {"sid": session_id, "host": hostname}
+        ).fetchone()
+        
+        asset_json = json.dumps(asset_details) if asset_details else '{}'
+        
+        if row:
+            # Row exists, update whichever part just arrived
+            if asset_details:
+                conn.execute(text("UPDATE triage_evidence SET asset_details = :details WHERE session_id = :sid AND hostname = :host"), {"sid": session_id, "host": hostname, "details": asset_json})
+            if technical_evidence:
+                conn.execute(text("UPDATE triage_evidence SET technical_evidence = :evidence WHERE session_id = :sid AND hostname = :host"), {"sid": session_id, "host": hostname, "evidence": technical_evidence})
+        else:
+            # First time seeing this asset, insert a clean row
+            conn.execute(
+                text("""
+                    INSERT INTO triage_evidence (session_id, hostname, asset_details, technical_evidence)
+                    VALUES (:sid, :host, :details, :evidence)
+                """),
+                {"sid": session_id, "host": hostname, "details": asset_json, "evidence": technical_evidence}
+            )
+
+def update_historical_resolution(session_id: str, resolution_notes: str):
+    """Updates the triage metadata table with historical incident data."""
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                UPDATE triage_metadata 
+                SET historical_resolution = :notes, updated_at = SYSDATETIMEOFFSET()
+                WHERE session_id = :sid
+            """),
+            {"sid": session_id, "notes": resolution_notes}
+        )
+
+def update_kba_details(session_id: str, kba_notes: str, kba_title: str, kba_url: str):
+    """Updates the metadata table with live-ranked KBA details independently."""
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                UPDATE triage_metadata 
+                SET kba_resolution_notes = :notes, 
+                    suggested_kba_title = :title, 
+                    suggested_kba_url = :url, 
+                    updated_at = SYSDATETIMEOFFSET()
+                WHERE session_id = :sid
+            """),
+            {"sid": session_id, "notes": kba_notes, "title": kba_title, "url": kba_url}
+        )
+
+def finalize_session_status(session_id: str, status: str = "Completed"):
+    """Marks the entire triage sequence as Complete."""
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE triage_sessions SET status = :status WHERE id = :id"), {"id": session_id, "status": status})
