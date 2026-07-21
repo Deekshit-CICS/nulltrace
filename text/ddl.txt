@@ -7,13 +7,13 @@ CREATE TABLE triage_sessions (
     incident_number VARCHAR(30) NOT NULL,
     change_number VARCHAR(30),
     priority VARCHAR(20),
-    status VARCHAR(20) DEFAULT 'Open',
-    created_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()
+    status VARCHAR(20) DEFAULT 'Processing', -- Options: 'Processing', 'Completed', 'Failed'
+    created_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+    updated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()
 );
 
--- Index the incident number for lightning-fast UI lookups (e.g., search by INC77790)
+-- Index the incident number for lightning-fast UI lookups and deduplication checks
 CREATE INDEX idx_triage_sessions_incident ON triage_sessions(incident_number);
--- Index the app_id to quickly aggregate metrics or filter by Application
 CREATE INDEX idx_triage_sessions_app ON triage_sessions(app_id);
 
 
@@ -30,14 +30,12 @@ CREATE TABLE triage_metadata (
     implementation_window VARCHAR(100),
     updated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
     
-    -- Cascade deletes: if a master triage session is removed, clean up its metadata
     CONSTRAINT fk_metadata_session 
         FOREIGN KEY (session_id) 
         REFERENCES triage_sessions(id) 
         ON DELETE CASCADE
 );
 
--- Index the foreign key for optimized relational JOIN operations
 CREATE INDEX idx_triage_metadata_session ON triage_metadata(session_id);
 
 
@@ -49,13 +47,11 @@ CREATE TABLE triage_evidence (
     session_id UNIQUEIDENTIFIER NOT NULL,
     hostname VARCHAR(100) NOT NULL,
     
-    -- In MS SQL Server, JSON is stored as standard VARCHAR(MAX) with an ISJSON constraint
+    -- Storing JSON properties (OS, Memory, CPU, Disk Utilization percentages)
     asset_details VARCHAR(MAX) DEFAULT '{}',
     
-    -- VARCHAR(MAX) handles large blocks containing the specific root-cause logs from Elastic
+    -- Raw diagnostic error log strings extracted from Elastic
     technical_evidence VARCHAR(MAX),
-    
-    -- Optional metadata keeping track of the exact Elastic query used for auditability
     elastic_query_meta VARCHAR(MAX) DEFAULT '{}',
     fetched_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
     
@@ -64,11 +60,77 @@ CREATE TABLE triage_evidence (
         REFERENCES triage_sessions(id) 
         ON DELETE CASCADE,
         
-    -- Ensures valid JSON structure inside the VARCHAR columns
     CONSTRAINT chk_asset_details_json CHECK (ISJSON(asset_details) = 1),
     CONSTRAINT chk_elastic_query_json CHECK (ISJSON(elastic_query_meta) = 1)
 );
 
--- Index the foreign key and hostname for instant grouping and filtering
 CREATE INDEX idx_triage_evidence_session ON triage_evidence(session_id);
 CREATE INDEX idx_triage_evidence_host ON triage_evidence(hostname);
+
+
+-- ============================================================================
+-- 4. RESOLUTIONS TABLE (MISSING: Layer 01 Historical Fixes & KBA Reranking)
+-- ============================================================================
+-- Holds output from both the Historical Context Agent and the KBA Resolution Agent
+CREATE TABLE triage_resolutions (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    
+    -- Field A: Output from Historical Context Agent (Past tickets/resolutions)
+    historical_resolution VARCHAR(MAX),
+    
+    -- Field B: Output from KBA Resolution Agent (LLM re-ranked knowledge steps)
+    kba_resolution_notes VARCHAR(MAX),
+    suggested_kba_title VARCHAR(255),
+    suggested_kba_url VARCHAR(500),
+    
+    updated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT fk_resolutions_session 
+        FOREIGN KEY (session_id) 
+        REFERENCES triage_sessions(id) 
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_triage_resolutions_session ON triage_resolutions(session_id);
+
+
+-- ============================================================================
+-- 5. AGENT EXECUTION LOGS TABLE (MISSING: Granular Multi-Agent Step Audit)
+-- ============================================================================
+-- Tracks parallel execution progress, execution speed (ms), and step status per agent
+CREATE TABLE triage_agent_logs (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    agent_name VARCHAR(50) NOT NULL, -- e.g., 'historical_context_agent', 'infrastructure_agent'
+    status VARCHAR(20) DEFAULT 'Started', -- Options: 'Started', 'Success', 'Failed'
+    log_message VARCHAR(MAX),
+    execution_time_ms INT,
+    created_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT fk_agent_logs_session 
+        FOREIGN KEY (session_id) 
+        REFERENCES triage_sessions(id) 
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_triage_agent_logs_session ON triage_agent_logs(session_id);
+
+
+-- ============================================================================
+-- 6. FINAL TRIAGE REPORTS TABLE (MISSING: Final Executive Summary Layer)
+-- ============================================================================
+-- Holds the final synthesized triage report compiled by state_merger_node
+CREATE TABLE triage_reports (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    triage_report VARCHAR(MAX) NOT NULL,
+    generated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT fk_reports_session 
+        FOREIGN KEY (session_id) 
+        REFERENCES triage_sessions(id) 
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_triage_reports_session ON triage_reports(session_id);
