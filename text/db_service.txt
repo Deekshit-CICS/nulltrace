@@ -1,102 +1,136 @@
-# app/db_service.py
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import URL
-import json
+-- ============================================================================
+-- 1. MASTER SESSIONS TABLE (Core Entry Layer)
+-- ============================================================================
+CREATE TABLE triage_sessions (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    app_id VARCHAR(50) NOT NULL,
+    incident_number VARCHAR(30) NOT NULL,
+    change_number VARCHAR(30),
+    priority VARCHAR(20),
+    status VARCHAR(20) DEFAULT 'Processing', -- Options: 'Processing', 'Completed', 'Failed'
+    created_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+    updated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()
+);
 
-# Your MS SQL Connection Setup
-connection_string = "DRIVER={ODBC Driver 17 for SQL Server};SERVER=your_server;DATABASE=your_db;UID=user;PWD=pass"
-connection_url = URL.create("mssql+pyodbc", query={"odbc_connect": connection_string})
-engine = create_engine(connection_url)
+-- Index the incident number for lightning-fast UI lookups and deduplication checks
+CREATE INDEX idx_triage_sessions_incident ON triage_sessions(incident_number);
+CREATE INDEX idx_triage_sessions_app ON triage_sessions(app_id);
 
-def upsert_layer_01_master(session_id: str, app_id: str, incident_number: str, priority: str):
-    """Inserts or updates the master row in triage_sessions."""
-    with engine.begin() as conn:
-        conn.execute(
-            text("""
-                MERGE triage_sessions AS target
-                USING (SELECT :id AS id) AS source
-                ON (target.id = source.id)
-                WHEN MATCHED THEN
-                    UPDATE SET app_id = :app, incident_number = :inc, priority = :pri, status = 'Processing'
-                WHEN NOT MATCHED THEN
-                    INSERT (id, app_id, incident_number, priority, status) 
-                    VALUES (:id, :app, :inc, :pri, 'Processing');
-            """),
-            {"id": session_id, "app": app_id, "inc": incident_number, "pri": priority}
-        )
 
-def upsert_layer_01_metadata(session_id: str, short_description: str, assignment_group: str, assigned_to: str):
-    """Inserts or updates the metadata card details."""
-    with engine.begin() as conn:
-        conn.execute(
-            text("""
-                MERGE triage_metadata AS target
-                USING (SELECT :sid AS session_id) AS source
-                ON (target.session_id = source.session_id)
-                WHEN MATCHED THEN
-                    UPDATE SET short_description = :desc, assignment_group = :group, assigned_to = :user, updated_at = SYSDATETIMEOFFSET()
-                WHEN NOT MATCHED THEN
-                    INSERT (session_id, short_description, assignment_group, assigned_to) 
-                    VALUES (:sid, :desc, :group, :user);
-            """),
-            {"sid": session_id, "desc": short_description, "group": assignment_group, "user": assigned_to}
-        )
+-- ============================================================================
+-- 2. METADATA TABLE (Layer 01 Details)
+-- ============================================================================
+CREATE TABLE triage_metadata (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    short_description VARCHAR(MAX),
+    assignment_group VARCHAR(100),
+    assigned_to VARCHAR(100),
+    risk_assessment VARCHAR(50),
+    implementation_window VARCHAR(100),
+    updated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+    
+    CONSTRAINT fk_metadata_session 
+        FOREIGN KEY (session_id) 
+        REFERENCES triage_sessions(id) 
+        ON DELETE CASCADE
+);
 
-def upsert_layer_02_evidence(session_id: str, hostname: str, asset_details: dict = None, technical_evidence: str = None):
-    """Inserts or incrementally updates Layer 02 components (Assets and Logs)."""
-    with engine.begin() as conn:
-        # Check if row exists for this host in this session
-        row = conn.execute(
-            text("SELECT id FROM triage_evidence WHERE session_id = :sid AND hostname = :host"),
-            {"sid": session_id, "host": hostname}
-        ).fetchone()
+CREATE INDEX idx_triage_metadata_session ON triage_metadata(session_id);
+
+
+-- ============================================================================
+-- 3. EVIDENCE TABLE (Layer 02: Discovery, Assets & Elastic Logs)
+-- ============================================================================
+CREATE TABLE triage_evidence (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    hostname VARCHAR(100) NOT NULL,
+    
+    -- Storing JSON properties (OS, Memory, CPU, Disk Utilization percentages)
+    asset_details VARCHAR(MAX) DEFAULT '{}',
+    
+    -- Raw diagnostic error log strings extracted from Elastic
+    technical_evidence VARCHAR(MAX),
+    elastic_query_meta VARCHAR(MAX) DEFAULT '{}',
+    fetched_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+    
+    CONSTRAINT fk_evidence_session 
+        FOREIGN KEY (session_id) 
+        REFERENCES triage_sessions(id) 
+        ON DELETE CASCADE,
         
-        asset_json = json.dumps(asset_details) if asset_details else '{}'
-        
-        if row:
-            # Row exists, update whichever part just arrived
-            if asset_details:
-                conn.execute(text("UPDATE triage_evidence SET asset_details = :details WHERE session_id = :sid AND hostname = :host"), {"sid": session_id, "host": hostname, "details": asset_json})
-            if technical_evidence:
-                conn.execute(text("UPDATE triage_evidence SET technical_evidence = :evidence WHERE session_id = :sid AND hostname = :host"), {"sid": session_id, "host": hostname, "evidence": technical_evidence})
-        else:
-            # First time seeing this asset, insert a clean row
-            conn.execute(
-                text("""
-                    INSERT INTO triage_evidence (session_id, hostname, asset_details, technical_evidence)
-                    VALUES (:sid, :host, :details, :evidence)
-                """),
-                {"sid": session_id, "host": hostname, "details": asset_json, "evidence": technical_evidence}
-            )
+    CONSTRAINT chk_asset_details_json CHECK (ISJSON(asset_details) = 1),
+    CONSTRAINT chk_elastic_query_json CHECK (ISJSON(elastic_query_meta) = 1)
+);
 
-def update_historical_resolution(session_id: str, resolution_notes: str):
-    """Updates the triage metadata table with historical incident data."""
-    with engine.begin() as conn:
-        conn.execute(
-            text("""
-                UPDATE triage_metadata 
-                SET historical_resolution = :notes, updated_at = SYSDATETIMEOFFSET()
-                WHERE session_id = :sid
-            """),
-            {"sid": session_id, "notes": resolution_notes}
-        )
+CREATE INDEX idx_triage_evidence_session ON triage_evidence(session_id);
+CREATE INDEX idx_triage_evidence_host ON triage_evidence(hostname);
 
-def update_kba_details(session_id: str, kba_notes: str, kba_title: str, kba_url: str):
-    """Updates the metadata table with live-ranked KBA details independently."""
-    with engine.begin() as conn:
-        conn.execute(
-            text("""
-                UPDATE triage_metadata 
-                SET kba_resolution_notes = :notes, 
-                    suggested_kba_title = :title, 
-                    suggested_kba_url = :url, 
-                    updated_at = SYSDATETIMEOFFSET()
-                WHERE session_id = :sid
-            """),
-            {"sid": session_id, "notes": kba_notes, "title": kba_title, "url": kba_url}
-        )
 
-def finalize_session_status(session_id: str, status: str = "Completed"):
-    """Marks the entire triage sequence as Complete."""
-    with engine.begin() as conn:
-        conn.execute(text("UPDATE triage_sessions SET status = :status WHERE id = :id"), {"id": session_id, "status": status})
+-- ============================================================================
+-- 4. RESOLUTIONS TABLE (MISSING: Layer 01 Historical Fixes & KBA Reranking)
+-- ============================================================================
+-- Holds output from both the Historical Context Agent and the KBA Resolution Agent
+CREATE TABLE triage_resolutions (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    
+    -- Field A: Output from Historical Context Agent (Past tickets/resolutions)
+    historical_resolution VARCHAR(MAX),
+    
+    -- Field B: Output from KBA Resolution Agent (LLM re-ranked knowledge steps)
+    kba_resolution_notes VARCHAR(MAX),
+    suggested_kba_title VARCHAR(255),
+    suggested_kba_url VARCHAR(500),
+    
+    updated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT fk_resolutions_session 
+        FOREIGN KEY (session_id) 
+        REFERENCES triage_sessions(id) 
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_triage_resolutions_session ON triage_resolutions(session_id);
+
+
+-- ============================================================================
+-- 5. AGENT EXECUTION LOGS TABLE (MISSING: Granular Multi-Agent Step Audit)
+-- ============================================================================
+-- Tracks parallel execution progress, execution speed (ms), and step status per agent
+CREATE TABLE triage_agent_logs (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    agent_name VARCHAR(50) NOT NULL, -- e.g., 'historical_context_agent', 'infrastructure_agent'
+    status VARCHAR(20) DEFAULT 'Started', -- Options: 'Started', 'Success', 'Failed'
+    log_message VARCHAR(MAX),
+    execution_time_ms INT,
+    created_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT fk_agent_logs_session 
+        FOREIGN KEY (session_id) 
+        REFERENCES triage_sessions(id) 
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_triage_agent_logs_session ON triage_agent_logs(session_id);
+
+
+-- ============================================================================
+-- 6. FINAL TRIAGE REPORTS TABLE (MISSING: Final Executive Summary Layer)
+-- ============================================================================
+-- Holds the final synthesized triage report compiled by state_merger_node
+CREATE TABLE triage_reports (
+    id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    session_id UNIQUEIDENTIFIER NOT NULL,
+    triage_report VARCHAR(MAX) NOT NULL,
+    generated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT fk_reports_session 
+        FOREIGN KEY (session_id) 
+        REFERENCES triage_sessions(id) 
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_triage_reports_session ON triage_reports(session_id);
