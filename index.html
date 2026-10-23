@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>nulltrace | Open-Source AI Incident Triage Framework</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#0f172a',
+                            900: '#0b0f19',
+                            950: '#060911',
+                        },
+                        cyan: {
+                            400: '#00D2FF',
+                        },
+                        emerald: {
+                            400: '#00F5A0',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Fira Code', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+            overflow-x: hidden;
+        }
+        .code-font {
+            font-family: 'Fira Code', monospace;
+        }
+        .glow-emerald {
+            box-shadow: 0 0 25px -5px rgba(0, 245, 160, 0.25);
+        }
+        .glow-cyan {
+            box-shadow: 0 0 25px -5px rgba(0, 210, 255, 0.25);
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #00F5A0 0%, #00D2FF 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .gradient-border {
+            border-image: linear-gradient(to right, #00F5A0, #00D2FF) 1;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0b0f19;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 antialiased selection:bg-emerald-400 selection:text-slate-900">
+
+    <!-- Navigation Header -->
+    <header class="sticky top-0 z-50 backdrop-blur-md bg-slate-900/80 border-b border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="h-9 w-9 rounded-lg bg-gradient-to-tr from-emerald-400 to-cyan-400 p-0.5 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                    <div class="h-full w-full bg-slate-900 rounded-[7px] flex items-center justify-center">
+                        <i data-lucide="shield-alert" class="w-5 h-5 text-emerald-400"></i>
+                    </div>
+                </div>
+                <span class="font-bold text-xl tracking-tight text-white">null<span class="text-emerald-400">trace</span></span>
+                <span class="text-xs bg-slate-800 text-emerald-400 px-2 py-0.5 rounded-full font-mono border border-emerald-500/20">v0.4.2-alpha</span>
+            </div>
+
+            <nav class="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-300">
+                <a href="#playground" class="hover:text-emerald-400 transition-colors">Interactive Simulator</a>
+                <a href="#features" class="hover:text-emerald-400 transition-colors">Why nulltrace</a>
+                <a href="#sdk" class="hover:text-emerald-400 transition-colors">Python SDK</a>
+                <a href="#docs" class="hover:text-emerald-400 transition-colors">Architecture</a>
+            </nav>
+
+            <div class="flex items-center space-x-4">
+                <a href="https://github.com" target="_blank" class="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-1.5 rounded-lg text-sm font-medium border border-slate-700 transition-all duration-200">
+                    <i data-lucide="github" class="w-4 h-4"></i>
+                    <span>Star</span>
+                    <span class="bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded text-xs ml-1 font-mono">1.8k</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="relative pt-12 pb-20 overflow-hidden">
+        <!-- Background Glow FX -->
+        <div class="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] bg-emerald-500/10 blur-[120px] rounded-full pointer-events-none"></div>
+        <div class="absolute top-1/3 left-1/3 w-[400px] h-[300px] bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none"></div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center max-w-3xl mx-auto mb-10">
+                <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700/80 text-xs font-mono text-emerald-400 mb-6 backdrop-blur-sm">
+                    <span class="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Deterministic Orchestration + In-Memory Redaction</span>
+                </div>
+                
+                <h1 class="text-4xl sm:text-6xl font-extrabold text-white tracking-tight leading-tight mb-6">
+                    The Open-Source Python Framework for <span class="gradient-text">AI Incident Triage</span>
+                </h1>
+                
+                <p class="text-lg text-slate-400 leading-relaxed mb-8">
+                    Stop letting non-deterministic LLM agents hallucinate tool parameters. <strong class="text-slate-200">nulltrace</strong> provides deterministic Python orchestration to scrub telemetry, correlate ServiceNow alerts with logs, and generate root-cause hypotheses reliably.
+                </p>
+
+                <!-- Terminal Command Box -->
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-md mx-auto">
+                    <div class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between font-mono text-sm shadow-inner group">
+                        <div class="flex items-center space-x-2 text-slate-300">
+                            <span class="text-emerald-400 select-none">$</span>
+                            <span id="pip-command">pip install nulltrace</span>
+                        </div>
+                        <button onclick="copyPipCommand()" class="text-slate-400 hover:text-white p-1.5 rounded bg-slate-900 hover:bg-slate-800 transition-colors border border-slate-800">
+                            <i id="copy-icon" data-lucide="copy" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    <a href="#playground" class="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 font-semibold hover:opacity-95 transition-all shadow-lg shadow-emerald-500/20 text-center whitespace-nowrap">
+                        Launch Simulator
+                    </a>
+                </div>
+            </div>
+
+            <!-- Architecture Flow Graphic -->
+            <div class="mt-12 max-w-5xl mx-auto bg-slate-950/80 rounded-xl border border-slate-800 p-6 shadow-2xl backdrop-blur-xl">
+                <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-4 text-center">Architecture Overview</div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-center relative">
+                    
+                    <div class="p-4 rounded-lg bg-slate-900 border border-slate-800/80 flex flex-col items-center">
+                        <div class="p-2.5 bg-slate-800 rounded-lg text-emerald-400 mb-2">
+                            <i data-lucide="database" class="w-5 h-5"></i>
+                        </div>
+                        <h4 class="font-semibold text-sm text-white">1. Telemetry Sources</h4>
+                        <p class="text-xs text-slate-400 mt-1">ServiceNow, Elastic, Dynatrace, CloudWatch</p>
+                    </div>
+
+                    <div class="p-4 rounded-lg bg-slate-900 border border-emerald-500/30 flex flex-col items-center relative glow-emerald">
+                        <div class="p-2.5 bg-emerald-500/10 rounded-lg text-emerald-400 mb-2">
+                            <i data-lucide="shield-check" class="w-5 h-5"></i>
+                        </div>
+                        <h4 class="font-semibold text-sm text-emerald-400">2. In-Memory Redaction</h4>
+                        <p class="text-xs text-slate-400 mt-1">Zero-Trust Python PII & JWT Masking</p>
+                    </div>
+
+                    <div class="p-4 rounded-lg bg-slate-900 border border-slate-800/80 flex flex-col items-center">
+                        <div class="p-2.5 bg-slate-800 rounded-lg text-cyan-400 mb-2">
+                            <i data-lucide="cpu" class="w-5 h-5"></i>
+                        </div>
+                        <h4 class="font-semibold text-sm text-white">3. Provider-Agnostic LLM</h4>
+                        <p class="text-xs text-slate-400 mt-1">OpenAI, Bedrock, Anthropic, Ollama</p>
+                    </div>
+
+                    <div class="p-4 rounded-lg bg-slate-900 border border-slate-800/80 flex flex-col items-center">
+                        <div class="p-2.5 bg-slate-800 rounded-lg text-purple-400 mb-2">
+                            <i data-lucide="file-check" class="w-5 h-5"></i>
+                        </div>
+                        <h4 class="font-semibold text-sm text-white">4. Root-Cause Analysis</h4>
+                        <p class="text-xs text-slate-400 mt-1">Structured Workflows & ServiceNow Updates</p>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Interactive Simulator / Playground Section -->
+    <section id="playground" class="py-16 bg-slate-950 border-y border-slate-800/80 relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex flex-col md:flex-row md:items-end justify-between mb-8">
+                <div>
+                    <div class="inline-flex items-center space-x-2 text-xs font-mono text-cyan-400 uppercase tracking-widest mb-2">
+                        <i data-lucide="terminal" class="w-4 h-4"></i>
+                        <span>Live Interactive Playground</span>
+                    </div>
+                    <h2 class="text-3xl font-bold text-white">Simulate Triage Workflow Engine</h2>
+                </div>
+                <p class="text-slate-400 text-sm max-w-md mt-2 md:mt-0">
+                    Test how nulltrace orchestrates multi-tool telemetry ingestion, applies deterministic PII scrubbing, and performs multi-model root-cause correlation.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <!-- Configurator Panel (Left 4 cols) -->
+                <div class="lg:col-span-4 bg-slate-900 rounded-xl border border-slate-800 p-6 flex flex-col justify-between">
+                    <div class="space-y-6">
+                        <h3 class="text-sm font-semibold uppercase tracking-wider text-slate-400 pb-2 border-b border-slate-800">
+                            1. Incident Configuration
+                        </h3>
+
+                        <!-- Target Incident Dropdown -->
+                        <div>
+                            <label class="block text-xs font-mono text-slate-300 mb-2">Target Incident Scenario</label>
+                            <select id="sim-incident" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-400">
+                                <option value="payment_latency">INC009412 - Payment Gateway Latency Spike & 500 Errors</option>
+                                <option value="db_connection">INC008201 - PostgreSQL Connection Pool Exhaustion</option>
+                                <option value="k8s_oom">INC007994 - Auth Service K8s Pod OOMKilled Loop</option>
+                            </select>
+                        </div>
+
+                        <!-- Telemetry Sources Checkboxes -->
+                        <div>
+                            <label class="block text-xs font-mono text-slate-300 mb-2">Integrated Connectors</label>
+                            <div class="grid grid-cols-2 gap-2 text-xs">
+                                <label class="flex items-center space-x-2 p-2 bg-slate-950 rounded border border-slate-800 cursor-pointer hover:border-slate-700">
+                                    <input type="checkbox" id="conn-servicenow" checked class="rounded border-slate-700 text-emerald-400 focus:ring-0">
+                                    <span class="text-slate-300">ServiceNow</span>
+                                </label>
+                                <label class="flex items-center space-x-2 p-2 bg-slate-950 rounded border border-slate-800 cursor-pointer hover:border-slate-700">
+                                    <input type="checkbox" id="conn-elastic" checked class="rounded border-slate-700 text-emerald-400 focus:ring-0">
+                                    <span class="text-slate-300">Elasticsearch</span>
+                                </label>
+                                <label class="flex items-center space-x-2 p-2 bg-slate-950 rounded border border-slate-800 cursor-pointer hover:border-slate-700">
+                                    <input type="checkbox" id="conn-dynatrace" checked class="rounded border-slate-700 text-emerald-400 focus:ring-0">
+                                    <span class="text-slate-300">Dynatrace</span>
+                                </label>
+                                <label class="flex items-center space-x-2 p-2 bg-slate-950 rounded border border-slate-800 cursor-pointer hover:border-slate-700">
+                                    <input type="checkbox" id="conn-cloudwatch" checked class="rounded border-slate-700 text-emerald-400 focus:ring-0">
+                                    <span class="text-slate-300">AWS CloudWatch</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- LLM Provider Selection -->
+                        <div>
+                            <label class="block text-xs font-mono text-slate-300 mb-2">LLM Provider Routing</label>
+                            <select id="sim-llm" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-400">
+                                <option value="anthropic">Anthropic Claude 3.5 Sonnet</option>
+                                <option value="openai">OpenAI GPT-4o</option>
+                                <option value="bedrock">AWS Bedrock (Claude 3 Enterprise)</option>
+                                <option value="ollama">Local Model (Ollama Llama3-70B)</option>
+                            </select>
+                        </div>
+
+                        <!-- Toggles -->
+                        <div class="space-y-3 pt-2">
+                            <label class="flex items-center justify-between cursor-pointer">
+                                <span class="text-xs text-slate-300">In-Memory PII / Auth Token Masking</span>
+                                <input type="checkbox" id="toggle-redaction" checked class="sr-only peer">
+                                <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-400 relative"></div>
+                            </label>
+                            <label class="flex items-center justify-between cursor-pointer">
+                                <span class="text-xs text-slate-300">Auto-Fallback Routing on Rate-Limit</span>
+                                <input type="checkbox" id="toggle-fallback" checked class="sr-only peer">
+                                <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-400 relative"></div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Trigger Button -->
+                    <button id="run-btn" onclick="runSimulator()" class="w-full mt-6 py-3 px-4 bg-gradient-to-r from-emerald-400 to-cyan-400 hover:opacity-90 text-slate-950 font-bold rounded-lg transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-2">
+                        <i data-lucide="play" class="w-4 h-4 fill-slate-950"></i>
+                        <span>Run Triage Engine</span>
+                    </button>
+                </div>
+
+                <!-- Execution Output Console (Right 8 cols) -->
+                <div class="lg:col-span-8 bg-slate-900 rounded-xl border border-slate-800 p-6 flex flex-col justify-between font-mono text-xs">
+                    <div>
+                        <!-- Pipeline Steps Progress Bar -->
+                        <div class="grid grid-cols-4 gap-2 mb-6">
+                            <div id="step-1" class="h-1.5 bg-slate-800 rounded-full transition-colors"></div>
+                            <div id="step-2" class="h-1.5 bg-slate-800 rounded-full transition-colors"></div>
+                            <div id="step-3" class="h-1.5 bg-slate-800 rounded-full transition-colors"></div>
+                            <div id="step-4" class="h-1.5 bg-slate-800 rounded-full transition-colors"></div>
+                        </div>
+
+                        <!-- Terminal Output Window -->
+                        <div class="bg-slate-950 rounded-lg border border-slate-800 p-4 min-h-[380px] max-h-[500px] overflow-y-auto space-y-4" id="sim-console">
+                            <div class="text-slate-500 italic">
+                                // Click "Run Triage Engine" to start execution simulation...
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Metrics bar -->
+                    <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-slate-400 text-[11px]">
+                        <div class="flex items-center space-x-4">
+                            <span>Status: <strong id="metric-status" class="text-slate-200">Idle</strong></span>
+                            <span>Latency: <strong id="metric-latency" class="text-slate-200">0 ms</strong></span>
+                        </div>
+                        <div>
+                            <span>Tokens Filtered: <strong id="metric-tokens" class="text-emerald-400">0</strong></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why nulltrace vs Raw MCP & Custom Agents -->
+    <section id="features" class="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-3xl mx-auto mb-16">
+            <h2 class="text-xs font-mono text-emerald-400 uppercase tracking-widest mb-2">Architectural Superiority</h2>
+            <p class="text-3xl font-bold text-white">Why nulltrace over Raw MCP or Custom Scripts?</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <!-- Feature 1 -->
+            <div class="p-6 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all">
+                <div class="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4">
+                    <i data-lucide="git-circuit-board" class="w-5 h-5"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-white mb-2">Deterministic Orchestration</h3>
+                <p class="text-sm text-slate-400">
+                    Unlike MCP tools where the LLM decides workflow paths non-deterministically, nulltrace uses DAGs to guarantee execution sequence.
+                </p>
+            </div>
+
+            <!-- Feature 2 -->
+            <div class="p-6 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all">
+                <div class="w-10 h-10 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center mb-4">
+                    <i data-lucide="lock" class="w-5 h-5"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-white mb-2">In-Memory PII Masking</h3>
+                <p class="text-sm text-slate-400">
+                    Scrubs sensitive JWT tokens, SSH keys, passwords, and PII in Python memory before logs hit external LLM provider context windows.
+                </p>
+            </div>
+
+            <!-- Feature 3 -->
+            <div class="p-6 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all">
+                <div class="w-10 h-10 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center mb-4">
+                    <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-white mb-2">Multi-Provider Fallback</h3>
+                <p class="text-sm text-slate-400">
+                    Built-in resilience. Automatically failover from Claude 3.5 Sonnet to GPT-4o or local Ollama if an API rate limit or outage occurs during P1 alerts.
+                </p>
+            </div>
+
+            <!-- Feature 4 -->
+            <div class="p-6 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all">
+                <div class="w-10 h-10 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center mb-4">
+                    <i data-lucide="layers" class="w-5 h-5"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-white mb-2">Unified Telemetry Model</h3>
+                <p class="text-sm text-slate-400">
+                    Normalizes disparate Elastic logs, Dynatrace metrics, and CloudWatch alarms into standardized Pydantic schemas automatically.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Python SDK Preview Section -->
+    <section id="sdk" class="py-16 bg-slate-950 border-t border-slate-800/80">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="max-w-3xl mx-auto text-center mb-10">
+                <h2 class="text-3xl font-bold text-white mb-3">Developer-First Python SDK</h2>
+                <p class="text-slate-400 text-sm">Clean, intuitive syntax designed for production engineers and SRE teams.</p>
+            </div>
+
+            <div class="max-w-4xl mx-auto bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-2xl">
+                <div class="bg-slate-950 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-3 h-3 rounded-full bg-red-500/80"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500/80"></div>
+                        <span class="text-xs font-mono text-slate-400 ml-2">workflow_pipeline.py</span>
+                    </div>
+                    <span class="text-xs font-mono text-emerald-400">Python 3.10+</span>
+                </div>
+
+                <pre class="p-6 text-sm font-mono text-slate-200 overflow-x-auto leading-relaxed"><code><span class="text-purple-400">from</span> nulltrace.connectors <span class="text-purple-400">import</span> ServiceNowConnector, ElasticConnector, DynatraceConnector
+<span class="text-purple-400">from</span> nulltrace.llm <span class="text-purple-400">import</span> LLMRouter
+<span class="text-purple-400">from</span> nulltrace.engine <span class="text-purple-400">import</span> TriageEngine
+
+<span class="text-slate-500"># 1. Initialize Telemetry Connectors</span>
+servicenow = ServiceNowConnector(instance_url=<span class="text-emerald-300">"https://dev1234.service-now.com"</span>)
+elastic = ElasticConnector(hosts=[<span class="text-emerald-300">"http://localhost:9200"</span>])
+dynatrace = DynatraceConnector(tenant_id=<span class="text-emerald-300">"abc12345"</span>)
+
+<span class="text-slate-500"># 2. Configure Resilient Provider-Agnostic LLM Router</span>
+router = LLMRouter(
+    primary_provider=<span class="text-emerald-300">"anthropic/claude-3-5-sonnet"</span>,
+    fallback_providers=[<span class="text-emerald-300">"openai/gpt-4o"</span>, <span class="text-emerald-300">"bedrock/anthropic.claude-v2"</span>]
+)
+
+<span class="text-slate-500"># 3. Instantiate Engine with In-Memory Security Policies</span>
+engine = TriageEngine(
+    incident_source=servicenow,
+    telemetry=[elastic, dynatrace],
+    llm_router=router,
+    enable_pii_masking=<span class="text-cyan-400">True</span>
+)
+
+<span class="text-slate-500"># 4. Orchestrate Automated Incident Triage Workflow</span>
+result = engine.run_triage(incident_id=<span class="text-emerald-300">"INC009412"</span>)
+<span class="text-purple-400">print</span>(result.root_cause_hypothesis)</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 bg-slate-950 py-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500">
+            <div class="flex items-center space-x-2 mb-4 sm:mb-0">
+                <i data-lucide="shield-alert" class="w-4 h-4 text-emerald-400"></i>
+                <span class="font-bold text-slate-300">nulltrace</span>
+                <span>— Open-Source Apache 2.0 License</span>
+            </div>
+            <div class="flex space-x-6">
+                <a href="#" class="hover:text-slate-300 transition-colors">Documentation</a>
+                <a href="#" class="hover:text-slate-300 transition-colors">GitHub Repository</a>
+                <a href="#" class="hover:text-slate-300 transition-colors">Discord Community</a>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript Simulator Logic -->
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+
+        // Clipboard Copy function
+        function copyPipCommand() {
+            const commandText = "pip install nulltrace";
+            navigator.clipboard.writeText(commandText).then(() => {
+                const icon = document.getElementById("copy-icon");
+                icon.setAttribute("data-lucide", "check");
+                icon.classList.add("text-emerald-400");
+                lucide.createIcons();
+                setTimeout(() => {
+                    icon.setAttribute("data-lucide", "copy");
+                    icon.classList.remove("text-emerald-400");
+                    lucide.createIcons();
+                }, 2000);
+            });
+        }
+
+        // Mock Scenarios Data
+        const scenarios = {
+            payment_latency: {
+                id: "INC009412",
+                title: "Payment Gateway Latency Spike & 500 Errors",
+                raw_log: '2026-10-21T14:32:01.012Z ERROR auth_service user_id=9812 jwt="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." DbPoolTimeoutException: Timeout waiting for connection after 3000ms. Host: 10.0.4.12:5432 AuthKey="sk_live_9941a882bcd"',
+                root_cause: "Database Connection Pool Exhaustion on primary read replica host 10.0.4.12 following microservice deployment v2.4.1.",
+                remediation: "Scale connection pool limit from 50 to 200 on payment-service or rollback release v2.4.1."
+            },
+            db_connection: {
+                id: "INC008201",
+                title: "PostgreSQL Connection Pool Exhaustion",
+                raw_log: '2026-10-21T11:15:22.401Z FATAL pg_bouncer client_ip=192.168.1.45 api_secret="sec_88412a" max clients reached for database user "app_checkout"',
+                root_cause: "Unclosed database cursors introduced in API endpoint POST /checkout causing connection leaks.",
+                remediation: "Restart pg_bouncer service and deploy patch fixing context manager cleanup."
+            },
+            k8s_oom: {
+                id: "INC007994",
+                title: "Auth Service K8s Pod OOMKilled Loop",
+                raw_log: '2026-10-21T08:02:11.892Z WARN k8s_kernel pod="auth-v1-98a12" token="Bearer eye8841..." Memory pressure exceeded limit 512Mi. Terminating container (OOMKilled).',
+                root_cause: "In-memory caching leak within session token validator under high request throughput.",
+                remediation: "Increase pod memory limit to 1Gi in deployment manifest and configure Redis eviction policy."
+            }
+        };
+
+        let isRunning = false;
+
+        async function runSimulator() {
+            if (isRunning) return;
+            isRunning = true;
+
+            const btn = document.getElementById("run-btn");
+            const consoleBox = document.getElementById("sim-console");
+            const scenarioKey = document.getElementById("sim-incident").value;
+            const scenario = scenarios[scenarioKey];
+            const isRedactionOn = document.getElementById("toggle-redaction").checked;
+            const llmProvider = document.getElementById("sim-llm").value;
+
+            btn.disabled = true;
+            btn.classList.add("opacity-50", "cursor-not-allowed");
+            consoleBox.innerHTML = "";
+
+            // Helper to update progress step indicators
+            const setStep = (step) => {
+                for (let i = 1; i <= 4; i++) {
+                    const el = document.getElementById(`step-${i}`);
+                    if (i <= step) {
+                        el.className = "h-1.5 bg-emerald-400 rounded-full transition-colors shadow-sm shadow-emerald-400";
+                    } else {
+                        el.className = "h-1.5 bg-slate-800 rounded-full transition-colors";
+                    }
+                }
+            };
+
+            const logLine = (text, type = "info") => {
+                const div = document.createElement("div");
+                div.className = "space-y-1 animate-fadeIn";
+                
+                let colorClass = "text-slate-300";
+                if (type === "success") colorClass = "text-emerald-400 font-semibold";
+                if (type === "warn") colorClass = "text-yellow-400";
+                if (type === "cyan") colorClass = "text-cyan-400";
+                if (type === "dim") colorClass = "text-slate-500";
+
+                div.innerHTML = `<span class="${colorClass}">${text}</span>`;
+                consoleBox.appendChild(div);
+                consoleBox.scrollTop = consoleBox.scrollHeight;
+            };
+
+            document.getElementById("metric-status").innerText = "Executing Workflow...";
+            document.getElementById("metric-status").className = "text-yellow-400";
+            const startTime = performance.now();
+
+            // STEP 1: Ingesting ServiceNow Incident Metadata
+            setStep(1);
+            logLine(`[1/4] INGESTING INCIDENT METADATA (${scenario.id})...`, "cyan");
+            await new Promise(r => setTimeout(r, 600));
+            logLine(`↳ Ingested ServiceNow Ticket: "${scenario.title}"`, "dim");
+            logLine(`↳ Normalizing schema into NullTraceIncident Pydantic Model...`, "dim");
+
+            // STEP 2: In-Memory Telemetry Aggregation & PII Scrubbing
+            await new Promise(r => setTimeout(r, 800));
+            setStep(2);
+            logLine(`\n[2/4] FETCHING TELEMETRY & SCRUBBING PII DATA...`, "cyan");
+            logLine(`↳ Fetching logs from Elastic & CloudWatch...`, "dim");
+
+            let logPayload = scenario.raw_log;
+            let tokensScrubbed = 0;
+
+            if (isRedactionOn) {
+                logLine(`↳ [SECURITY] Applying In-Memory Regex Masking Filter...`, "warn");
+                logPayload = logPayload
+                    .replace(/jwt="[^"]+"/, 'jwt="[REDACTED_JWT_TOKEN]"')
+                    .replace(/AuthKey="[^"]+"/, 'AuthKey="[REDACTED_API_KEY]"')
+                    .replace(/api_secret="[^"]+"/, 'api_secret="[REDACTED_SECRET]"')
+                    .replace(/token="[^"]+"/, 'token="[REDACTED_BEARER_TOKEN]"');
+                tokensScrubbed = 3;
+                document.getElementById("metric-tokens").innerText = tokensScrubbed;
+                logLine(`↳ Raw Log Preview (Safe Context Payload):\n  "${logPayload}"`, "dim");
+            } else {
+                logLine(`⚠️ [WARNING] PII Redaction Disabled! Unmasked auth tokens passing to LLM context window!`, "warn");
+            }
+
+            // STEP 3: LLM Cross-Correlation & Root Cause Hypothesis
+            await new Promise(r => setTimeout(r, 1000));
+            setStep(3);
+            logLine(`\n[3/4] LLM CROSS-CORRELATION ENGINE (${llmProvider})...`, "cyan");
+            logLine(`↳ Routing prompt payload to Provider API...`, "dim");
+            logLine(`↳ Cross-correlating metric anomalies with log time-series...`, "dim");
+
+            // STEP 4: Output Analysis & ServiceNow Payload Construction
+            await new Promise(r => setTimeout(r, 1000));
+            setStep(4);
+            logLine(`\n[4/4] ROOT CAUSE HYPOTHESIS GENERATED SUCCESSFULLY!`, "success");
+            logLine(`================================================================`, "dim");
+            logLine(`🎯 Root Cause: ${scenario.root_cause}`, "success");
+            logLine(`💡 Suggested Remediation: ${scenario.remediation}`, "dim");
+            logLine(`================================================================`, "dim");
+            logLine(`↳ ServiceNow INC009412 Work Notes Auto-Updated via REST API.`, "dim");
+
+            const endTime = performance.now();
+            const elapsed = Math.round(endTime - startTime);
+            document.getElementById("metric-latency").innerText = `${elapsed} ms`;
+            document.getElementById("metric-status").innerText = "Completed (200 OK)";
+            document.getElementById("metric-status").className = "text-emerald-400";
+
+            btn.disabled = false;
+            btn.classList.remove("opacity-50", "cursor-not-allowed");
+            isRunning = false;
+        }
+    </script>
+</body>
+</html>
